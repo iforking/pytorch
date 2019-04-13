@@ -29,6 +29,7 @@ struct SugaredValue : public std::enable_shared_from_this<SugaredValue> {
   // what can we do with this thing?
   // use it as a value e.g.  `this + 4`
   virtual Value* asValue(const SourceRange& loc, Function& m) {
+    AT_ASSERT(false);
     throw ErrorReport(loc) << kind() << " cannot be used as a value";
   }
 
@@ -321,14 +322,7 @@ struct TORCH_API ClassNewMethod : public SugaredValue {
 
   std::shared_ptr<SugaredValue> createObject(
       const SourceRange& loc,
-      Function& m,
-      const std::string& classname) {
-    if (classname != type_->name()) {
-      throw ErrorReport(loc)
-          << "Argument to __new__() must match the class "
-          << "you are calling __new__() on. "
-          << "Got: " << classname << ", expected: " << type_->name();
-    }
+      Function& m) {
     auto& g = *m.graph();
     auto createNode = g.insertNode(g.createObject(type_));
     return std::make_shared<SimpleValue>(createNode->output());
@@ -349,6 +343,30 @@ static inline Self simpleSelf(const TypePtr& typ) {
     return std::make_shared<SimpleValue>(v);
   };
 }
+
+// Represents nested class namespaces, like `foo.bar.Baz`.
+// Right now these namespaces can only contain other namespaces or a class type.
+struct TORCH_API ClassNamespaceValue : public SugaredValue {
+  explicit ClassNamespaceValue(std::string name) : basename_(std::move(name)) {}
+
+  std::shared_ptr<SugaredValue> attr(
+      const SourceRange& loc,
+      Function& m,
+      const std::string& name) override {
+    const auto fullName = basename_ + "." + name;
+    if (auto classType = ClassType::get(fullName)) {
+      return std::make_shared<ClassValue>(classType);
+    }
+
+    return std::make_shared<ClassNamespaceValue>(fullName);
+  }
+  std::string kind() const override {
+    return "Class Namespace";
+  }
+
+ private:
+  std::string basename_;
+};
 
 } // namespace script
 } // namespace jit
